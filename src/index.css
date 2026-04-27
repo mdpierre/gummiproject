@@ -1,0 +1,186 @@
+@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --gummy-color: #FF6B9D;
+
+    --background: 40 100% 97%;
+    --foreground: 280 40% 20%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 280 40% 20%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 280 40% 20%;
+
+    --primary: 0 85% 55%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 280 55% 50%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 40 40% 92%;
+    --muted-foreground: 280 20% 40%;
+
+    --accent: 45 100% 60%;
+    --accent-foreground: 280 40% 20%;
+
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 40 30% 88%;
+    --input: 40 30% 88%;
+    --ring: 0 85% 55%;
+
+    --radius: 1rem;
+
+    --gummy-pink: 330 80% 60%;
+    --gummy-green: 145 75% 38%;
+    --gummy-yellow: 48 100% 58%;
+    --gummy-blue: 210 85% 55%;
+    --gummy-purple: 275 70% 42%;
+    --gummy-orange: 22 95% 52%;
+    --gummy-red: 0 88% 50%;
+    --gummy-pink-dark: 320 65% 40%;
+    --gummy-green-dark: 155 70% 28%;
+    --gummy-blue-dark: 220 75% 40%;
+  }
+
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Nunito', sans-serif;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Fredoka', sans-serif;
+  }
+}
+
+/* ─── Animations ─────────────────────────────────────────────── */
+
+@keyframes bounce-gentle {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
+@keyframes wiggle {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(-3deg); }
+  75% { transform: rotate(3deg); }
+}
+
+@keyframes pop-in {
+  0% { transform: scale(0); opacity: 0; }
+  70% { transform: scale(1.1); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  33% { transform: translateY(-6px) rotate(1deg); }
+  66% { transform: translateY(-3px) rotate(-1deg); }
+}
+
+.animate-bounce-gentle { animation: bounce-gentle 2s ease-in-out infinite; }
+.animate-wiggle { animation: wiggle 1s ease-in-out infinite; }
+.animate-pop-in { animation: pop-in 0.5s ease-out forwards; }
+.animate-float { animation: float 3s ease-in-out infinite; }
+
+/* ─── Gummy Bubble ───────────────────────────────────────────── */
+
+.gummy-bubble {
+  @apply flex flex-col items-center justify-center cursor-pointer select-none;
+  width: 92px;
+  height: 92px;
+  border-radius: 48% 52% 45% 55% / 50% 46% 54% 50%;
+  position: relative;
+  transition: transform 0.25s cubic-bezier(.34,1.56,.64,1), box-shadow 0.25s ease;
+  box-shadow:
+    0 6px 18px rgba(0,0,0,0.2),
+    0 2px 6px rgba(0,0,0,0.12),
+    inset 0 -6px 12px rgba(0,0,0,0.18),
+    inset 0 3px 8px rgba(255,255,255,0.35);
+}
+
+.gummy-bubble::before {
+  content: '';
+  position: absolute;
+  top: 12%;
+  left: 18%;
+  width: 40%;
+  height: 35%;
+  border-radius: 50%;
+  background: radial-gradient(
+    ellipse at 50% 40%,
+    rgba(255,255,255,0.55) 0%,
+    rgba(255,255,255,0.15) 50%,
+    transparent 70%
+  );
+  pointer-events: none;
+}
+
+.gummy-bubble:hover {
+  transform: scale(1.2) translateY(-4px);
+  box-shadow:
+    0 12px 28px rgba(0,0,0,0.25),
+    0 4px 10px rgba(0,0,0,0.15),
+    inset 0 -6px 12px rgba(0,0,0,0.18),
+    inset 0 3px 8px rgba(255,255,255,0.4);
+}
+
+.gummy-bubble:active {
+  transform: scale(0.92);
+}
+
+@media (max-width: 639px) {
+  .gummy-bubble {
+    width: 80px;
+    height: 80px;
+  }
+}
+
+/* ─── Gummy Card ─────────────────────────────────────────────── */
+
+.gummy-card {
+  @apply rounded-2xl p-5;
+  background: hsl(var(--card));
+  border: 2px solid hsl(var(--border));
+  box-shadow:
+    0 4px 16px rgba(0,0,0,0.08),
+    0 1px 4px rgba(0,0,0,0.06),
+    inset 0 1px 0 rgba(255,255,255,0.6);
+  background-image: radial-gradient(
+    ellipse at 20% 0%,
+    rgba(255,255,255,0.25) 0%,
+    transparent 50%
+  );
+}
+
+/* ─── Gummy Answer Pill ──────────────────────────────────────── */
+
+.gummy-answer {
+  @apply rounded-xl p-3 text-left text-sm transition-all flex items-center gap-2;
+  font-family: 'Nunito', sans-serif;
+  background: hsl(var(--card));
+  border: 2px solid hsl(var(--border));
+  box-shadow:
+    0 3px 8px rgba(0,0,0,0.08),
+    inset 0 1px 0 rgba(255,255,255,0.5);
+  cursor: pointer;
+}
+.gummy-answer:hover:not(:disabled) {
+  border-color: hsl(var(--primary) / 0.5);
+  transform: translateY(-2px);
+  box-shadow:
+    0 5px 14px rgba(0,0,0,0.12),
+    inset 0 1px 0 rgba(255,255,255,0.5);
+}
+.gummy-answer:disabled {
+  cursor: default;
+}

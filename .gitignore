@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+output/
+
+# Environment — never commit real keys
+.env
+.env.local
+.env.*.local
+
+# Editor
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Vite
+*.local
+.vercel
+
+# Local tooling
+.claude/
+.playwright-cli/
