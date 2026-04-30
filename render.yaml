@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: gummy
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: VITE_TTS_PROVIDER
+        value: web-speech
+      - key: VITE_API_BASE_URL
+        value: ""
+      - key: ANTHROPIC_API_KEY
+        sync: false

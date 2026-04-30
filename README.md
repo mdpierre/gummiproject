@@ -49,30 +49,37 @@ Backend:
 
 ## Deploy
 
-### Frontend on Vercel
+### Render (single service)
 
-Set these in the Vercel project:
+This repo now supports a single Render web service:
 
-- `VITE_API_BASE_URL=https://YOUR-RAILWAY-BACKEND.up.railway.app`
+- the Vite app is built during deploy
+- the Express server serves both the frontend and `/api/*`
+- React Router routes resolve through the server in production
+
+Create a new Render `Web Service` from this repo and use:
+
+- Build command: `npm install && npm run build`
+- Start command: `npm start`
+
+Set these environment variables in Render:
+
+- `ANTHROPIC_API_KEY=...`
 - `VITE_TTS_PROVIDER=web-speech`
+- `VITE_API_BASE_URL=` (leave blank for same-origin API calls)
+- `ALLOWED_ORIGINS=` (optional when frontend and API share the same Render URL)
 
 Notes:
 
-- `vercel.json` includes an SPA rewrite so React Router routes like `/modules/what-is-ai` resolve correctly.
-- The frontend is static. The API should point to Railway in production.
+- `render.yaml` is included if you want to use Render Blueprints.
+- The app listens on `0.0.0.0` and `process.env.PORT`, which matches Render's web service requirements.
 
-### Backend on Railway
+### Vercel + Railway (older split setup)
 
-Set these in Railway:
+If you prefer separate frontend and backend hosting, the older split deployment still works:
 
-- `ANTHROPIC_API_KEY=...`
-- `ALLOWED_ORIGINS=https://YOUR-VERCEL-FRONTEND.vercel.app`
-
-Runtime:
-
-- Start command: `npm run start:server`
-
-The server listens on `process.env.PORT`, so Railway can assign the port automatically.
+- frontend on Vercel
+- backend on Railway
 
 ## Whisper In Production
 

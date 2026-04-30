@@ -2,9 +2,15 @@ import express from 'express';
 import cors from 'cors';
 import Anthropic from '@anthropic-ai/sdk';
 import 'dotenv/config';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 const app = express();
 const PORT = process.env.PORT ?? 3001;
+const HOST = process.env.HOST ?? '0.0.0.0';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const DIST_DIR = path.resolve(__dirname, '..', 'dist');
 
 // ─── Allowed call types ───────────────────────────────────────────────────────
 
@@ -28,11 +34,18 @@ const DEPLOYED_ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? '')
   .split(',')
   .map(origin => origin.trim())
   .filter(Boolean);
+const RENDER_ALLOWED_ORIGINS = [
+  process.env.RENDER_EXTERNAL_URL,
+  process.env.PUBLIC_ORIGIN,
+]
+  .map(origin => origin?.trim())
+  .filter(Boolean);
+const ALLOWED_ORIGINS = [...new Set([...DEPLOYED_ALLOWED_ORIGINS, ...RENDER_ALLOWED_ORIGINS])];
 
 function isAllowedOrigin(origin) {
   return (
     LOCAL_ALLOWED_ORIGIN_PATTERNS.some(pattern => pattern.test(origin)) ||
-    DEPLOYED_ALLOWED_ORIGINS.includes(origin)
+    ALLOWED_ORIGINS.includes(origin)
   );
 }
 
@@ -134,8 +147,16 @@ app.post('/api/llm', async (req, res) => {
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
+// ─── Frontend hosting (production) ────────────────────────────────────────────
+
+app.use(express.static(DIST_DIR));
+
+app.get(/^(?!\/api(?:\/|$)).*/, (_req, res) => {
+  res.sendFile(path.join(DIST_DIR, 'index.html'));
+});
+
 // ─── Start ────────────────────────────────────────────────────────────────────
 
-app.listen(PORT, () => {
-  console.log(`Gummy LLM proxy listening on http://localhost:${PORT}`);
+app.listen(PORT, HOST, () => {
+  console.log(`Gummy app listening on http://${HOST}:${PORT}`);
 });
