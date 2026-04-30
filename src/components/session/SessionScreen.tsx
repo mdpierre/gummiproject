@@ -78,6 +78,7 @@ export default function SessionScreen({ content, navigateWhenDone }: SessionScre
   const [isListeningUI, setIsListeningUI] = useState(false);
   const [manualMode, setManualMode] = useState(false);
   const [manualAnswer, setManualAnswer] = useState('');
+  const [lastTranscript, setLastTranscript] = useState('');
 
   // Prevent double-triggers in effects
   const advanceLock = useRef(false);
@@ -120,6 +121,10 @@ export default function SessionScreen({ content, navigateWhenDone }: SessionScre
     setManualAnswer('');
   }, []);
 
+  const resetCapturedTranscript = useCallback(() => {
+    setLastTranscript('');
+  }, []);
+
   function hasSpokenResponse(transcript: string): boolean {
     return transcript.trim().length > 0;
   }
@@ -147,10 +152,12 @@ export default function SessionScreen({ content, navigateWhenDone }: SessionScre
         ? Math.round((words.length / result.durationMs) * 60_000)
         : 0;
       metricsCollector.recordSpeechSample(paceWpm, 0, words.length >= 3);
+      setLastTranscript(result.transcript.trim());
       return result.transcript;
     } catch {
       setIsListeningUI(false);
       setAvatarMode('locked');
+      setLastTranscript('');
       return '';
     }
   }
@@ -210,6 +217,7 @@ export default function SessionScreen({ content, navigateWhenDone }: SessionScre
     if (sPhase !== 'q-asking') return;
     advanceLock.current = false;
     resetManualAnswer();
+    resetCapturedTranscript();
     const q = questions.current[questionIdx];
     if (!q) {
       // All questions done → big question
@@ -221,7 +229,7 @@ export default function SessionScreen({ content, navigateWhenDone }: SessionScre
       setSPhase('q-listening');
     });
     return () => stopSpeaking();
-  }, [sPhase, questionIdx, resetManualAnswer]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sPhase, questionIdx, resetManualAnswer, resetCapturedTranscript]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Phase: q-listening ───────────────────────────────────────────────────
   useEffect(() => {
@@ -259,6 +267,7 @@ export default function SessionScreen({ content, navigateWhenDone }: SessionScre
     setShowBalloon(false);
     await stopAndTranscribe();
     const transcript = manualAnswer.trim();
+    setLastTranscript(transcript);
     resetManualAnswer();
     handleAnswerReceived(transcript, false);
   }
@@ -322,11 +331,12 @@ export default function SessionScreen({ content, navigateWhenDone }: SessionScre
   useEffect(() => {
     if (sPhase !== 'followup-ask') return;
     resetManualAnswer();
+    resetCapturedTranscript();
     setTimeout(() => {
       say('Why do you think that?', () => setSPhase('followup-listen'));
     }, 600);
     return () => stopSpeaking();
-  }, [sPhase, resetManualAnswer]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sPhase, resetManualAnswer, resetCapturedTranscript]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Phase: followup-listen ───────────────────────────────────────────────
   useEffect(() => {
@@ -373,12 +383,13 @@ export default function SessionScreen({ content, navigateWhenDone }: SessionScre
   useEffect(() => {
     if (sPhase !== 'bigq-asking') return;
     resetManualAnswer();
+    resetCapturedTranscript();
     say(
       `Here's the big question — and there's no wrong answer! ${contentItem.bigQuestion}`,
       () => setSPhase('bigq-listening'),
     );
     return () => stopSpeaking();
-  }, [sPhase, resetManualAnswer]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sPhase, resetManualAnswer, resetCapturedTranscript]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Phase: bigq-listening ────────────────────────────────────────────────
   useEffect(() => {
@@ -413,6 +424,7 @@ export default function SessionScreen({ content, navigateWhenDone }: SessionScre
     advanceLock.current = true;
     await stopAndTranscribe();
     const transcript = manualAnswer.trim();
+    setLastTranscript(transcript);
     resetManualAnswer();
     if (hasSpokenResponse(transcript)) {
       metricsCollector.recordFollowUp();
@@ -430,6 +442,7 @@ export default function SessionScreen({ content, navigateWhenDone }: SessionScre
     advanceLock.current = true;
     await stopAndTranscribe();
     const transcript = manualAnswer.trim();
+    setLastTranscript(transcript);
     resetManualAnswer();
     metricsCollector.recordBigQuestion(transcript);
     triggerConfetti();
@@ -561,6 +574,16 @@ export default function SessionScreen({ content, navigateWhenDone }: SessionScre
           <div className="flex items-center gap-2">
             <span className="w-3 h-3 rounded-full animate-pulse" style={{ backgroundColor: color }} />
             <span className="text-sm text-gray-500">Gummy is listening...</span>
+          </div>
+        )}
+        {(isListeningUI || lastTranscript) && (
+          <div className="w-full max-w-sm bg-white/80 rounded-3xl px-4 py-3 shadow-sm text-left">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-1">
+              Whisper heard
+            </p>
+            <p className="text-sm text-gray-700 leading-relaxed">
+              {lastTranscript || 'Nothing captured yet.'}
+            </p>
           </div>
         )}
         {sPhase === 'q-listening' && isListeningUI && (

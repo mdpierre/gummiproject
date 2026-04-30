@@ -41,6 +41,7 @@ export default function CalibrationScreen() {
   const [confettiBurstId, setConfettiBurstId] = useState(0);
   const [manualMode, setManualMode] = useState(false);
   const [manualAnswer, setManualAnswer] = useState('');
+  const [lastTranscript, setLastTranscript] = useState('');
 
   const signals = useRef<CalibrationSignal[]>([]);
   const questionStartMs = useRef(0);
@@ -78,6 +79,7 @@ export default function CalibrationScreen() {
     }
     setManualMode(false);
     setManualAnswer('');
+    setLastTranscript('');
     setAvatarMode('thinking');
     setStatusText(questions[idx]);
     speak(questions[idx], {
@@ -116,6 +118,7 @@ export default function CalibrationScreen() {
     const transcript = (overrideTranscript ?? result.transcript).trim();
     setManualMode(false);
     setManualAnswer('');
+    setLastTranscript(transcript);
     if (isIepMode && !transcript && !extraTimeUsed.current.has(currentIdx)) {
       extraTimeUsed.current.add(currentIdx);
       setAvatarMode('thinking');
@@ -259,6 +262,14 @@ export default function CalibrationScreen() {
             onToggle={() => setManualMode(value => !value)}
             onSubmit={handleManualSubmit}
           />
+          <div className="w-full max-w-sm bg-white/80 rounded-3xl px-4 py-3 shadow-sm text-left">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-1">
+              Whisper heard
+            </p>
+            <p className="text-sm text-gray-700 leading-relaxed">
+              {lastTranscript || 'Nothing captured yet.'}
+            </p>
+          </div>
         </div>
       )}
     </div>
