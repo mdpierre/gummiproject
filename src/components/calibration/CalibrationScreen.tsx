@@ -4,6 +4,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import GummyAvatar from '../avatar/GummyAvatar';
 import Confetti from '../session/Confetti';
+import ManualAnswerControls from '../ManualAnswerControls';
 import { speak, stopSpeaking } from '../../lib/speech/tts';
 import { startListening, stopListening } from '../../lib/speech/stt';
 import { generateCalibrationQuestions } from '../../lib/llm/client';
@@ -38,6 +39,8 @@ export default function CalibrationScreen() {
   const [statusText, setStatusText] = useState('');
   const [showConfetti, setShowConfetti] = useState(false);
   const [confettiBurstId, setConfettiBurstId] = useState(0);
+  const [manualMode, setManualMode] = useState(false);
+  const [manualAnswer, setManualAnswer] = useState('');
 
   const signals = useRef<CalibrationSignal[]>([]);
   const questionStartMs = useRef(0);
@@ -73,6 +76,8 @@ export default function CalibrationScreen() {
       setInternalPhase('done');
       return;
     }
+    setManualMode(false);
+    setManualAnswer('');
     setAvatarMode('thinking');
     setStatusText(questions[idx]);
     speak(questions[idx], {
@@ -99,7 +104,7 @@ export default function CalibrationScreen() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [internalPhase, currentIdx, listeningWindowMs]);
 
-  async function handleDone() {
+  async function handleDone(overrideTranscript?: string) {
     if (internalPhase !== 'listening') return;
     setInternalPhase('asking'); // prevents double-trigger
 
@@ -108,7 +113,9 @@ export default function CalibrationScreen() {
       result = await stopListening();
     } catch { /* ignore */ }
 
-    const transcript = result.transcript.trim();
+    const transcript = (overrideTranscript ?? result.transcript).trim();
+    setManualMode(false);
+    setManualAnswer('');
     if (isIepMode && !transcript && !extraTimeUsed.current.has(currentIdx)) {
       extraTimeUsed.current.add(currentIdx);
       setAvatarMode('thinking');
@@ -156,6 +163,11 @@ export default function CalibrationScreen() {
 
   const questionNumber = Math.min(currentIdx + 1, questions.length);
   const total = questions.length;
+
+  async function handleManualSubmit() {
+    if (!manualAnswer.trim()) return;
+    await handleDone(manualAnswer);
+  }
 
   return (
     <div
@@ -228,12 +240,25 @@ export default function CalibrationScreen() {
             </span>
           </div>
           <button
-            onClick={handleDone}
+            onClick={() => {
+              void handleDone();
+            }}
             className="px-6 py-3 rounded-2xl text-white font-semibold text-sm active:scale-95 transition-transform"
             style={{ backgroundColor: color }}
           >
             Done talking ✓
           </button>
+          <ManualAnswerControls
+            color={color}
+            value={manualAnswer}
+            visible={manualMode}
+            promptLabel="Type the warm-up answer"
+            toggleLabel="Type answer instead"
+            submitLabel="Use typed answer"
+            onChange={setManualAnswer}
+            onToggle={() => setManualMode(value => !value)}
+            onSubmit={handleManualSubmit}
+          />
         </div>
       )}
     </div>

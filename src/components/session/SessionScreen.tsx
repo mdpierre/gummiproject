@@ -8,6 +8,7 @@ import KaraokeText from './KaraokeText';
 import Confetti from './Confetti';
 import FallingGummies from '../timer/FallingGummies';
 import BalloonCountdown from '../timer/BalloonCountdown';
+import ManualAnswerControls from '../ManualAnswerControls';
 import { speak, stopSpeaking } from '../../lib/speech/tts';
 import { startListening, stopListening, cancelListening } from '../../lib/speech/stt';
 import { evaluateContentAnswer } from '../../lib/llm/client';
@@ -75,6 +76,8 @@ export default function SessionScreen({ content, navigateWhenDone }: SessionScre
   const [confettiBurstId, setConfettiBurstId] = useState(0);
   const [showBalloon, setShowBalloon] = useState(false);
   const [isListeningUI, setIsListeningUI] = useState(false);
+  const [manualMode, setManualMode] = useState(false);
+  const [manualAnswer, setManualAnswer] = useState('');
 
   // Prevent double-triggers in effects
   const advanceLock = useRef(false);
@@ -110,6 +113,11 @@ export default function SessionScreen({ content, navigateWhenDone }: SessionScre
   const triggerConfetti = useCallback(() => {
     setConfettiBurstId(id => id + 1);
     setShowConfetti(true);
+  }, []);
+
+  const resetManualAnswer = useCallback(() => {
+    setManualMode(false);
+    setManualAnswer('');
   }, []);
 
   function hasSpokenResponse(transcript: string): boolean {
@@ -201,6 +209,7 @@ export default function SessionScreen({ content, navigateWhenDone }: SessionScre
   useEffect(() => {
     if (sPhase !== 'q-asking') return;
     advanceLock.current = false;
+    resetManualAnswer();
     const q = questions.current[questionIdx];
     if (!q) {
       // All questions done → big question
@@ -212,7 +221,7 @@ export default function SessionScreen({ content, navigateWhenDone }: SessionScre
       setSPhase('q-listening');
     });
     return () => stopSpeaking();
-  }, [sPhase, questionIdx]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sPhase, questionIdx, resetManualAnswer]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Phase: q-listening ───────────────────────────────────────────────────
   useEffect(() => {
@@ -240,6 +249,17 @@ export default function SessionScreen({ content, navigateWhenDone }: SessionScre
     advanceLock.current = true;
     setShowBalloon(false);
     const transcript = await stopAndTranscribe();
+    resetManualAnswer();
+    handleAnswerReceived(transcript, false);
+  }
+
+  async function handleTypedAnswer() {
+    if (advanceLock.current || !manualAnswer.trim()) return;
+    advanceLock.current = true;
+    setShowBalloon(false);
+    await stopAndTranscribe();
+    const transcript = manualAnswer.trim();
+    resetManualAnswer();
     handleAnswerReceived(transcript, false);
   }
 
@@ -301,11 +321,12 @@ export default function SessionScreen({ content, navigateWhenDone }: SessionScre
   // ─── Phase: followup-ask ──────────────────────────────────────────────────
   useEffect(() => {
     if (sPhase !== 'followup-ask') return;
+    resetManualAnswer();
     setTimeout(() => {
       say('Why do you think that?', () => setSPhase('followup-listen'));
     }, 600);
     return () => stopSpeaking();
-  }, [sPhase]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sPhase, resetManualAnswer]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Phase: followup-listen ───────────────────────────────────────────────
   useEffect(() => {
@@ -336,6 +357,7 @@ export default function SessionScreen({ content, navigateWhenDone }: SessionScre
     if (advanceLock.current) return;
     advanceLock.current = true;
     const transcript = await stopAndTranscribe();
+    resetManualAnswer();
     if (hasSpokenResponse(transcript)) {
       metricsCollector.recordFollowUp();
     }
@@ -350,12 +372,13 @@ export default function SessionScreen({ content, navigateWhenDone }: SessionScre
   // ─── Phase: bigq-asking ───────────────────────────────────────────────────
   useEffect(() => {
     if (sPhase !== 'bigq-asking') return;
+    resetManualAnswer();
     say(
       `Here's the big question — and there's no wrong answer! ${contentItem.bigQuestion}`,
       () => setSPhase('bigq-listening'),
     );
     return () => stopSpeaking();
-  }, [sPhase]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sPhase, resetManualAnswer]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Phase: bigq-listening ────────────────────────────────────────────────
   useEffect(() => {
@@ -374,7 +397,41 @@ export default function SessionScreen({ content, navigateWhenDone }: SessionScre
     if (advanceLock.current) return;
     advanceLock.current = true;
     const result = await stopAndTranscribe();
+    resetManualAnswer();
     metricsCollector.recordBigQuestion(result);
+    triggerConfetti();
+    setAvatarMode('celebrating');
+    say(
+      `Wow, what a great answer! You should be so proud. You learned about ${contentItem.title} today — that's huge!`,
+      () => setSPhase('session-done'),
+    );
+    setSPhase('bigq-celebrate');
+  }
+
+  async function handleTypedFollowup() {
+    if (advanceLock.current || !manualAnswer.trim()) return;
+    advanceLock.current = true;
+    await stopAndTranscribe();
+    const transcript = manualAnswer.trim();
+    resetManualAnswer();
+    if (hasSpokenResponse(transcript)) {
+      metricsCollector.recordFollowUp();
+    }
+    triggerConfetti();
+    say('Great thinking!', () => {
+      setHintCount(0);
+      setQuestionIdx(i => i + 1);
+      setSPhase('q-asking');
+    });
+  }
+
+  async function handleTypedBigQ() {
+    if (advanceLock.current || !manualAnswer.trim()) return;
+    advanceLock.current = true;
+    await stopAndTranscribe();
+    const transcript = manualAnswer.trim();
+    resetManualAnswer();
+    metricsCollector.recordBigQuestion(transcript);
     triggerConfetti();
     setAvatarMode('celebrating');
     say(
@@ -507,31 +564,70 @@ export default function SessionScreen({ content, navigateWhenDone }: SessionScre
           </div>
         )}
         {sPhase === 'q-listening' && isListeningUI && (
-          <button
-            onClick={handleChildDoneListening}
-            className="px-8 py-3 rounded-2xl text-white font-bold text-base active:scale-95 transition-transform shadow"
-            style={{ backgroundColor: color }}
-          >
-            Done talking ✓
-          </button>
+          <>
+            <button
+              onClick={handleChildDoneListening}
+              className="px-8 py-3 rounded-2xl text-white font-bold text-base active:scale-95 transition-transform shadow"
+              style={{ backgroundColor: color }}
+            >
+              Done talking ✓
+            </button>
+            <ManualAnswerControls
+              color={color}
+              value={manualAnswer}
+              visible={manualMode}
+              promptLabel="Type the child's answer"
+              toggleLabel="Type answer instead"
+              submitLabel="Use typed answer"
+              onChange={setManualAnswer}
+              onToggle={() => setManualMode(value => !value)}
+              onSubmit={handleTypedAnswer}
+            />
+          </>
         )}
         {sPhase === 'followup-listen' && isListeningUI && (
-          <button
-            onClick={handleFollowupDone}
-            className="px-8 py-3 rounded-2xl text-white font-bold text-base active:scale-95 transition-transform shadow"
-            style={{ backgroundColor: color }}
-          >
-            Done ✓
-          </button>
+          <>
+            <button
+              onClick={handleFollowupDone}
+              className="px-8 py-3 rounded-2xl text-white font-bold text-base active:scale-95 transition-transform shadow"
+              style={{ backgroundColor: color }}
+            >
+              Done ✓
+            </button>
+            <ManualAnswerControls
+              color={color}
+              value={manualAnswer}
+              visible={manualMode}
+              promptLabel="Type the follow-up answer"
+              toggleLabel="Type answer instead"
+              submitLabel="Use typed answer"
+              onChange={setManualAnswer}
+              onToggle={() => setManualMode(value => !value)}
+              onSubmit={handleTypedFollowup}
+            />
+          </>
         )}
         {sPhase === 'bigq-listening' && isListeningUI && (
-          <button
-            onClick={handleBigQDone}
-            className="px-8 py-3 rounded-2xl text-white font-bold text-base active:scale-95 transition-transform shadow"
-            style={{ backgroundColor: color }}
-          >
-            I shared my answer ✓
-          </button>
+          <>
+            <button
+              onClick={handleBigQDone}
+              className="px-8 py-3 rounded-2xl text-white font-bold text-base active:scale-95 transition-transform shadow"
+              style={{ backgroundColor: color }}
+            >
+              I shared my answer ✓
+            </button>
+            <ManualAnswerControls
+              color={color}
+              value={manualAnswer}
+              visible={manualMode}
+              promptLabel="Type the big answer"
+              toggleLabel="Type answer instead"
+              submitLabel="Use typed answer"
+              onChange={setManualAnswer}
+              onToggle={() => setManualMode(value => !value)}
+              onSubmit={handleTypedBigQ}
+            />
+          </>
         )}
       </div>
     </div>
