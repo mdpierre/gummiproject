@@ -5,15 +5,17 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import GummyAvatar from '../avatar/GummyAvatar';
 import Confetti from '../session/Confetti';
 import ManualAnswerControls from '../ManualAnswerControls';
+import MicLevelMeter from '../MicLevelMeter';
 import { speak, stopSpeaking } from '../../lib/speech/tts';
-import { startListening, stopListening } from '../../lib/speech/stt';
+import { startListening, stopListening, type STTResult } from '../../lib/speech/stt';
 import { generateCalibrationQuestions } from '../../lib/llm/client';
 import { detectTierFromCalibration } from '../../lib/adaptive/tier';
 import { useSession } from '../../context/SessionContext';
+import useMicLevel from '../../hooks/useMicLevel';
 import type { CalibrationSignal } from '../../types';
 import { FALLBACK_CALIBRATION_QUESTIONS } from '../../lib/llm/fallbacks';
 
-type InternalPhase = 'loading' | 'intro' | 'asking' | 'listening' | 'done';
+type InternalPhase = 'loading' | 'intro' | 'asking' | 'listening' | 'transcribing' | 'done';
 
 // Simple heuristic: did the response use a multi-syllabic word?
 function hasComplexWord(text: string): boolean {
@@ -42,10 +44,13 @@ export default function CalibrationScreen() {
   const [manualMode, setManualMode] = useState(false);
   const [manualAnswer, setManualAnswer] = useState('');
   const [lastTranscript, setLastTranscript] = useState('');
+  const [lastCaptureResult, setLastCaptureResult] = useState<STTResult | null>(null);
+  const micLevel = useMicLevel();
 
   const signals = useRef<CalibrationSignal[]>([]);
   const questionStartMs = useRef(0);
   const extraTimeUsed = useRef<Set<number>>(new Set());
+  const noSignalRetries = useRef<Set<number>>(new Set());
 
   const triggerConfetti = useCallback(() => {
     setConfettiBurstId(id => id + 1);
@@ -80,6 +85,7 @@ export default function CalibrationScreen() {
     setManualMode(false);
     setManualAnswer('');
     setLastTranscript('');
+    setLastCaptureResult(null);
     setAvatarMode('thinking');
     setStatusText(questions[idx]);
     speak(questions[idx], {
@@ -108,9 +114,9 @@ export default function CalibrationScreen() {
 
   async function handleDone(overrideTranscript?: string) {
     if (internalPhase !== 'listening') return;
-    setInternalPhase('asking'); // prevents double-trigger
+    setInternalPhase('transcribing'); // prevents double-trigger while Whisper runs
 
-    let result = { transcript: '', durationMs: 0 };
+    let result: STTResult = { transcript: '', durationMs: 0 };
     try {
       result = await stopListening();
     } catch { /* ignore */ }
@@ -119,6 +125,22 @@ export default function CalibrationScreen() {
     setManualMode(false);
     setManualAnswer('');
     setLastTranscript(transcript);
+    setLastCaptureResult(result);
+
+    if (!overrideTranscript && (result.maxLevel ?? 0) < 0.02 && !noSignalRetries.current.has(currentIdx)) {
+      noSignalRetries.current.add(currentIdx);
+      setAvatarMode('thinking');
+      speak("I didn't hear that one. Let's try again.", {
+        onEnd: () => {
+          questionStartMs.current = Date.now();
+          setAvatarMode('listening');
+          setInternalPhase('listening');
+          startListening().catch(console.error);
+        },
+      });
+      return;
+    }
+
     if (isIepMode && !transcript && !extraTimeUsed.current.has(currentIdx)) {
       extraTimeUsed.current.add(currentIdx);
       setAvatarMode('thinking');
@@ -146,7 +168,7 @@ export default function CalibrationScreen() {
     } else {
       triggerConfetti();
       setCurrentIdx(next);
-      // 'asking' effect picks up from here
+      setInternalPhase('asking');
     }
   }
 
@@ -213,7 +235,7 @@ export default function CalibrationScreen() {
             Let's warm up, {childName}!
           </p>
         )}
-        {(internalPhase === 'asking' || internalPhase === 'listening') && (
+        {(internalPhase === 'asking' || internalPhase === 'listening' || internalPhase === 'transcribing') && (
           <>
             <p className="text-xs text-gray-400 mb-2">
               Warm-up question {questionNumber} of {total}
@@ -231,17 +253,28 @@ export default function CalibrationScreen() {
       </div>
 
       {/* Listening indicator + done button */}
-      {internalPhase === 'listening' && (
+      {(internalPhase === 'listening' || internalPhase === 'transcribing' || lastCaptureResult) && (
         <div className="flex flex-col items-center gap-4">
+          {(internalPhase === 'listening' || internalPhase === 'transcribing') && (
           <div className="flex items-center gap-2 text-gray-500">
             <span
               className="w-3 h-3 rounded-full animate-pulse"
               style={{ backgroundColor: color }}
             />
+            <MicLevelMeter color={color} level={micLevel.level} />
             <span className="text-sm">
-              {isIepMode ? 'Gummy is listening. Take your time...' : 'Gummy is listening...'}
+              {internalPhase === 'transcribing'
+                ? 'Gummy is turning voice into words...'
+                : micLevel.speaking
+                ? 'Gummy hears you...'
+                : isIepMode
+                  ? 'Gummy is listening. Take your time...'
+                  : 'Gummy is listening...'}
             </span>
           </div>
+          )}
+          {internalPhase === 'listening' && (
+          <>
           <button
             onClick={() => {
               void handleDone();
@@ -262,6 +295,8 @@ export default function CalibrationScreen() {
             onToggle={() => setManualMode(value => !value)}
             onSubmit={handleManualSubmit}
           />
+          </>
+          )}
           <div className="w-full max-w-sm bg-white/80 rounded-3xl px-4 py-3 shadow-sm text-left">
             <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-1">
               Whisper heard
@@ -269,6 +304,17 @@ export default function CalibrationScreen() {
             <p className="text-sm text-gray-700 leading-relaxed">
               {lastTranscript || 'Nothing captured yet.'}
             </p>
+            {lastCaptureResult && (
+              <div className="text-[11px] text-gray-400 mt-2 space-y-1">
+                <p>
+                  Signal {Math.round((lastCaptureResult.maxLevel ?? 0) * 100)}% · {lastCaptureResult.captureMode ?? 'none'} · {lastCaptureResult.inputLabel || 'Unknown mic'}
+                </p>
+                <p>
+                  Transcription: {lastCaptureResult.transcriptSource ?? 'none'}
+                  {lastCaptureResult.transcriptionError ? ` · ${lastCaptureResult.transcriptionError}` : ''}
+                </p>
+              </div>
+            )}
           </div>
         </div>
       )}

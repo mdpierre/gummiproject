@@ -2,15 +2,28 @@
 // Collects: child name, IEP toggle, patience window.
 // Then guides through mic permission before advancing to color selection.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import MicLevelMeter from '../MicLevelMeter';
 import { useSession } from '../../context/SessionContext';
+import {
+  listMicInputDevices,
+  runMicCaptureTest,
+  setMicInputDevice,
+  type MicInputDevice,
+  type STTResult,
+} from '../../lib/speech/stt';
+import useMicLevel from '../../hooks/useMicLevel';
 import type { SessionConfig } from '../../types';
 
-type Step = 'form' | 'mic-request' | 'mic-denied';
+type Step = 'form' | 'mic-request' | 'mic-testing' | 'mic-quiet' | 'mic-denied';
 
 export default function OnboardingScreen() {
   const { state, setConfig, setPhase, startSession } = useSession();
   const [step, setStep] = useState<Step>('form');
+  const [lastMicTest, setLastMicTest] = useState<STTResult | null>(null);
+  const [micDevices, setMicDevices] = useState<MicInputDevice[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState('');
+  const micLevel = useMicLevel();
 
   // Form state
   const [childName, setChildName] = useState(state.config.childName);
@@ -20,6 +33,18 @@ export default function OnboardingScreen() {
   );
 
   const effectivePatienceWindow = iepMode ? 15 : patienceWindow;
+
+  useEffect(() => {
+    if (step !== 'mic-request' && step !== 'mic-quiet') return;
+    listMicInputDevices()
+      .then(devices => {
+        setMicDevices(devices);
+        if (!selectedDeviceId && devices.length > 0) {
+          setSelectedDeviceId(devices[0].deviceId);
+        }
+      })
+      .catch(() => setMicDevices([]));
+  }, [step, selectedDeviceId]);
 
   function handleFormSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -35,15 +60,30 @@ export default function OnboardingScreen() {
   }
 
   async function requestMic() {
+    setStep('mic-testing');
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      // Permission granted — stop the temporary check stream immediately.
-      stream.getTracks().forEach(track => track.stop());
+      setMicInputDevice(selectedDeviceId);
+      const result = await runMicCaptureTest();
+      setLastMicTest(result);
+      const devices = await listMicInputDevices().catch(() => []);
+      setMicDevices(devices);
+      if (!hasAudibleSignal(result)) {
+        setStep('mic-quiet');
+        return;
+      }
       startSession();
       setPhase('color-select');
     } catch {
       setStep('mic-denied');
     }
+  }
+
+  function hasAudibleSignal(result: STTResult): boolean {
+    return (result.maxLevel ?? 0) >= 0.02;
+  }
+
+  function formatPercent(value = 0): string {
+    return `${Math.round(value * 100)}%`;
   }
 
   // ─── Form step ──────────────────────────────────────────────────────────────
@@ -178,12 +218,106 @@ export default function OnboardingScreen() {
             <strong className="text-gray-700">Voice stays on this device.</strong>
             {' '}Only the words — not the audio — are ever sent anywhere.
           </p>
+          {micDevices.length > 0 && (
+            <label className="block text-left text-sm font-semibold text-gray-700 mb-5">
+              Microphone
+              <select
+                value={selectedDeviceId}
+                onChange={event => setSelectedDeviceId(event.target.value)}
+                className="mt-2 w-full rounded-xl border border-gray-200 bg-white px-3 py-3 text-sm text-gray-700 outline-none focus:border-gray-300"
+              >
+                {micDevices.map(device => (
+                  <option key={device.deviceId} value={device.deviceId}>
+                    {device.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <button
             onClick={requestMic}
             className="w-full py-4 rounded-2xl text-white font-bold text-lg transition-transform active:scale-95"
             style={{ backgroundColor: 'var(--gummy-color)' }}
           >
             Allow microphone →
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 'mic-testing') {
+    return (
+      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6">
+        <div className="w-full max-w-md bg-white rounded-3xl shadow-xl p-8 text-center">
+          <div className="text-5xl mb-4">🎤</div>
+          <h2 className="text-xl font-bold text-gray-900 mb-3">
+            Checking the microphone
+          </h2>
+          <p className="text-gray-500 text-sm leading-relaxed mb-6">
+            Say “hello Gummy” while Gummy checks that audio is really coming through.
+          </p>
+          <div className="flex justify-center mb-4">
+            <MicLevelMeter color="var(--gummy-color)" level={micLevel.level} />
+          </div>
+          <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden">
+            <div
+              className="h-3 rounded-full animate-pulse"
+              style={{ width: '70%', backgroundColor: 'var(--gummy-color)' }}
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 'mic-quiet') {
+    return (
+      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6">
+        <div className="w-full max-w-md bg-white rounded-3xl shadow-xl p-8 text-center">
+          <div className="text-5xl mb-4">🎤</div>
+          <h2 className="text-xl font-bold text-gray-900 mb-3">
+            Gummy could not hear the mic
+          </h2>
+          <p className="text-gray-500 text-sm leading-relaxed mb-6">
+            The browser allowed microphone access, but Gummy did not hear a clear voice signal.
+            Check the device microphone, browser input, and system privacy settings, then try again.
+          </p>
+          {lastMicTest && (
+            <div className="bg-gray-50 rounded-xl p-3 text-left text-xs text-gray-500 mb-5">
+              <p>Input: {lastMicTest.inputLabel || 'Unknown microphone'}</p>
+              <p>Signal: {formatPercent(lastMicTest.maxLevel)}</p>
+              <p>Capture: {lastMicTest.captureMode ?? 'none'}</p>
+            </div>
+          )}
+          {micDevices.length > 0 && (
+            <label className="block text-left text-sm font-semibold text-gray-700 mb-5">
+              Try a different microphone
+              <select
+                value={selectedDeviceId}
+                onChange={event => setSelectedDeviceId(event.target.value)}
+                className="mt-2 w-full rounded-xl border border-gray-200 bg-white px-3 py-3 text-sm text-gray-700 outline-none focus:border-gray-300"
+              >
+                {micDevices.map(device => (
+                  <option key={device.deviceId} value={device.deviceId}>
+                    {device.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <button
+            onClick={requestMic}
+            className="w-full py-4 rounded-2xl text-white font-bold text-lg transition-transform active:scale-95"
+            style={{ backgroundColor: 'var(--gummy-color)' }}
+          >
+            Test microphone again
+          </button>
+          <button
+            onClick={() => setStep('form')}
+            className="w-full mt-3 py-3 rounded-2xl text-gray-500 font-medium text-sm bg-gray-100"
+          >
+            Back to setup
           </button>
         </div>
       </div>

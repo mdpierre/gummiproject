@@ -9,12 +9,14 @@ import Confetti from './Confetti';
 import FallingGummies from '../timer/FallingGummies';
 import BalloonCountdown from '../timer/BalloonCountdown';
 import ManualAnswerControls from '../ManualAnswerControls';
+import MicLevelMeter from '../MicLevelMeter';
 import { speak, stopSpeaking } from '../../lib/speech/tts';
-import { startListening, stopListening, cancelListening } from '../../lib/speech/stt';
+import { startListening, stopListening, cancelListening, type STTResult } from '../../lib/speech/stt';
 import { evaluateContentAnswer } from '../../lib/llm/client';
 import { refineTierWithTimerResult, selectQuestions, type QuestionLike } from '../../lib/adaptive/tier';
 import { metricsCollector } from '../../lib/metrics/collector';
 import { useSession } from '../../context/SessionContext';
+import useMicLevel from '../../hooks/useMicLevel';
 import { getModule } from '../../modules';
 import { moduleToContentItem } from '../../lib/content/adapters';
 import type { ContentItem } from '../../lib/content/types';
@@ -79,6 +81,8 @@ export default function SessionScreen({ content, navigateWhenDone }: SessionScre
   const [manualMode, setManualMode] = useState(false);
   const [manualAnswer, setManualAnswer] = useState('');
   const [lastTranscript, setLastTranscript] = useState('');
+  const [lastCaptureResult, setLastCaptureResult] = useState<STTResult | null>(null);
+  const micLevel = useMicLevel();
 
   // Prevent double-triggers in effects
   const advanceLock = useRef(false);
@@ -123,6 +127,7 @@ export default function SessionScreen({ content, navigateWhenDone }: SessionScre
 
   const resetCapturedTranscript = useCallback(() => {
     setLastTranscript('');
+    setLastCaptureResult(null);
   }, []);
 
   function hasSpokenResponse(transcript: string): boolean {
@@ -153,11 +158,13 @@ export default function SessionScreen({ content, navigateWhenDone }: SessionScre
         : 0;
       metricsCollector.recordSpeechSample(paceWpm, 0, words.length >= 3);
       setLastTranscript(result.transcript.trim());
+      setLastCaptureResult(result);
       return result.transcript;
     } catch {
       setIsListeningUI(false);
       setAvatarMode('locked');
       setLastTranscript('');
+      setLastCaptureResult(null);
       return '';
     }
   }
@@ -573,10 +580,13 @@ export default function SessionScreen({ content, navigateWhenDone }: SessionScre
         {isListeningUI && (
           <div className="flex items-center gap-2">
             <span className="w-3 h-3 rounded-full animate-pulse" style={{ backgroundColor: color }} />
-            <span className="text-sm text-gray-500">Gummy is listening...</span>
+            <MicLevelMeter color={color} level={micLevel.level} />
+            <span className="text-sm text-gray-500">
+              {micLevel.speaking ? 'Gummy hears you...' : 'Gummy is listening...'}
+            </span>
           </div>
         )}
-        {(isListeningUI || lastTranscript) && (
+        {(isListeningUI || lastTranscript || lastCaptureResult) && (
           <div className="w-full max-w-sm bg-white/80 rounded-3xl px-4 py-3 shadow-sm text-left">
             <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-1">
               Whisper heard
@@ -584,6 +594,17 @@ export default function SessionScreen({ content, navigateWhenDone }: SessionScre
             <p className="text-sm text-gray-700 leading-relaxed">
               {lastTranscript || 'Nothing captured yet.'}
             </p>
+            {lastCaptureResult && (
+              <div className="text-[11px] text-gray-400 mt-2 space-y-1">
+                <p>
+                  Signal {Math.round((lastCaptureResult.maxLevel ?? 0) * 100)}% · {lastCaptureResult.captureMode ?? 'none'} · {lastCaptureResult.inputLabel || 'Unknown mic'}
+                </p>
+                <p>
+                  Transcription: {lastCaptureResult.transcriptSource ?? 'none'}
+                  {lastCaptureResult.transcriptionError ? ` · ${lastCaptureResult.transcriptionError}` : ''}
+                </p>
+              </div>
+            )}
           </div>
         )}
         {sPhase === 'q-listening' && isListeningUI && (

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { SessionProvider, useSession } from '../context/SessionContext';
 import { useProfile } from '../context/ProfileContext';
 import OnboardingScreen from '../components/onboarding/OnboardingScreen';
@@ -9,15 +9,22 @@ import CalibrationScreen from '../components/calibration/CalibrationScreen';
 
 function OnboardingRouter() {
   const { state } = useSession();
-  const { profile, saveProfile } = useProfile();
+  const { profile, saveProfile, clearProfile } = useProfile();
   const navigate = useNavigate();
+  const location = useLocation();
   const hasSavedProfileRef = useRef(false);
+  const shouldReset = new URLSearchParams(location.search).get('reset') === '1';
 
   useEffect(() => {
+    if (shouldReset) {
+      clearProfile();
+      navigate('/onboarding', { replace: true });
+      return;
+    }
     if (profile?.calibrated) {
       navigate('/', { replace: true });
     }
-  }, [profile, navigate]);
+  }, [profile, navigate, clearProfile, shouldReset]);
 
   useEffect(() => {
     if (state.phase === 'story' && !hasSavedProfileRef.current) {

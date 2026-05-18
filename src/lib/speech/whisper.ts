@@ -108,7 +108,7 @@ export async function transcribeAudio(audioBlob: Blob): Promise<string> {
     throw new Error('Whisper not initialized. Call initWhisper() first.');
   }
 
-  const float32 = await blobToFloat32At16kHz(audioBlob);
+  const float32 = normalizeForWhisper(await blobToFloat32At16kHz(audioBlob));
   return transcribePreparedAudio(float32);
 }
 
@@ -120,7 +120,9 @@ export async function transcribeSamples(
     throw new Error('Whisper not initialized. Call initWhisper() first.');
   }
 
-  const float32 = sampleRate === 16000 ? samples : resampleMonoTo16kHz(samples, sampleRate);
+  const float32 = normalizeForWhisper(
+    sampleRate === 16000 ? samples : resampleMonoTo16kHz(samples, sampleRate),
+  );
   return transcribePreparedAudio(float32);
 }
 
@@ -129,11 +131,40 @@ async function transcribePreparedAudio(float32: Float32Array): Promise<string> {
     sampling_rate: 16000,
     language: 'english',
     task: 'transcribe',
+    chunk_length_s: 30,
+    stride_length_s: 5,
   });
 
   // result.text is the transcript
   const text: string = (result as { text: string }).text ?? '';
   return text.trim();
+}
+
+function normalizeForWhisper(input: Float32Array): Float32Array {
+  if (input.length === 0) {
+    return input;
+  }
+
+  let peak = 0;
+  for (const sample of input) {
+    peak = Math.max(peak, Math.abs(sample));
+  }
+
+  if (peak === 0) {
+    return input;
+  }
+
+  const targetPeak = 0.85;
+  const gain = Math.min(8, targetPeak / peak);
+  if (gain <= 1.05) {
+    return input;
+  }
+
+  const output = new Float32Array(input.length);
+  for (let i = 0; i < input.length; i += 1) {
+    output[i] = Math.max(-1, Math.min(1, input[i] * gain));
+  }
+  return output;
 }
 
 export function isWhisperReady(): boolean {
@@ -143,15 +174,10 @@ export function isWhisperReady(): boolean {
 function assertSupportedWhisperBrowser(): void {
   if (typeof window === 'undefined') return;
 
-  const browserWindow = window as Window & {
-    webkitAudioContext?: typeof AudioContext;
-  };
-
   const missingApis = [
-    typeof AudioContext === 'undefined' && typeof browserWindow.webkitAudioContext === 'undefined'
+    !getAudioContextCtor()
       ? 'AudioContext'
       : null,
-    typeof MediaRecorder === 'undefined' ? 'MediaRecorder' : null,
   ].filter(Boolean);
 
   if (missingApis.length > 0) {
@@ -193,8 +219,12 @@ async function clearStaleLocalModelCacheEntries(modelId: string): Promise<void> 
 
 async function blobToFloat32At16kHz(blob: Blob): Promise<Float32Array> {
   const arrayBuffer = await blob.arrayBuffer();
-  // Decode the compressed audio (WebM/Opus from MediaRecorder)
-  const decodeCtx = new AudioContext();
+  // Decode the browser-selected recording container from MediaRecorder.
+  const AudioContextCtor = getAudioContextCtor();
+  if (!AudioContextCtor) {
+    throw new Error('AudioContext is not available for local audio decoding.');
+  }
+  const decodeCtx = new AudioContextCtor();
   const audioBuffer = await decodeCtx.decodeAudioData(arrayBuffer);
   await decodeCtx.close();
 
@@ -204,15 +234,37 @@ async function blobToFloat32At16kHz(blob: Blob): Promise<Float32Array> {
   }
 
   // Resample to 16 kHz mono using OfflineAudioContext
+  const OfflineAudioContextCtor = getOfflineAudioContextCtor();
+  if (!OfflineAudioContextCtor) {
+    throw new Error('OfflineAudioContext is not available for local audio resampling.');
+  }
   const targetSampleRate = 16000;
   const targetLength = Math.ceil(audioBuffer.duration * targetSampleRate);
-  const offlineCtx = new OfflineAudioContext(1, targetLength, targetSampleRate);
+  const offlineCtx = new OfflineAudioContextCtor(1, targetLength, targetSampleRate);
   const source = offlineCtx.createBufferSource();
   source.buffer = audioBuffer;
   source.connect(offlineCtx.destination);
   source.start(0);
   const rendered = await offlineCtx.startRendering();
   return rendered.getChannelData(0);
+}
+
+function getAudioContextCtor(): typeof AudioContext | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const browserWindow = window as Window & {
+    webkitAudioContext?: typeof AudioContext;
+  };
+
+  return window.AudioContext ?? browserWindow.webkitAudioContext;
+}
+
+function getOfflineAudioContextCtor(): typeof OfflineAudioContext | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const browserWindow = window as Window & {
+    webkitOfflineAudioContext?: typeof OfflineAudioContext;
+  };
+
+  return window.OfflineAudioContext ?? browserWindow.webkitOfflineAudioContext;
 }
 
 function resampleMonoTo16kHz(input: Float32Array, inputSampleRate: number): Float32Array {
