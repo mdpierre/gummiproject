@@ -61,23 +61,112 @@ app.use(
     },
   }),
 );
-app.use(express.json());
+app.use(express.json({ limit: '12mb' }));
 
 // ─── Rate limiting (simple per-session counter via in-memory map) ─────────────
 
 const sessionRequestCounts = new Map();
+const sessionTranscriptionCounts = new Map();
 const MAX_REQUESTS_PER_SESSION = 30;
+const MAX_TRANSCRIPTIONS_PER_SESSION = 60;
+const MAX_TRANSCRIBE_BYTES = 8 * 1024 * 1024;
 
-function checkRateLimit(sessionId) {
+function checkRateLimit(counterMap, sessionId, maxRequests) {
   if (!sessionId) return false;
-  const count = sessionRequestCounts.get(sessionId) ?? 0;
-  if (count >= MAX_REQUESTS_PER_SESSION) return false;
-  sessionRequestCounts.set(sessionId, count + 1);
+  const count = counterMap.get(sessionId) ?? 0;
+  if (count >= maxRequests) return false;
+  counterMap.set(sessionId, count + 1);
   return true;
 }
 
 // Clean up old session counters every hour
-setInterval(() => sessionRequestCounts.clear(), 60 * 60 * 1000);
+setInterval(() => {
+  sessionRequestCounts.clear();
+  sessionTranscriptionCounts.clear();
+}, 60 * 60 * 1000);
+
+// ─── STT Route ───────────────────────────────────────────────────────────────
+
+app.post('/api/transcribe', async (req, res) => {
+  if (!req.is('application/json')) {
+    return res.status(415).json({ error: 'Content-Type must be application/json' });
+  }
+
+  const { audioBase64, mimeType, sessionId } = req.body;
+  const allowedKeys = new Set(['audioBase64', 'mimeType', 'sessionId']);
+  const unknownKeys = Object.keys(req.body).filter(k => !allowedKeys.has(k));
+  if (unknownKeys.length > 0) {
+    return res.status(400).json({ error: `Unknown fields: ${unknownKeys.join(', ')}` });
+  }
+
+  if (!checkRateLimit(sessionTranscriptionCounts, sessionId, MAX_TRANSCRIPTIONS_PER_SESSION)) {
+    return res.status(429).json({ error: 'Session rate limit reached' });
+  }
+
+  if (!process.env.OPENAI_API_KEY) {
+    return res.status(500).json({ error: 'OPENAI_API_KEY not configured on server' });
+  }
+
+  if (typeof audioBase64 !== 'string' || audioBase64.length === 0) {
+    return res.status(400).json({ error: 'audioBase64 is required' });
+  }
+
+  const audioBuffer = Buffer.from(audioBase64, 'base64');
+  if (audioBuffer.length === 0) {
+    return res.status(400).json({ error: 'Audio payload is empty' });
+  }
+
+  if (audioBuffer.length > MAX_TRANSCRIBE_BYTES) {
+    return res.status(413).json({ error: 'Audio payload is too large' });
+  }
+
+  const safeMimeType = typeof mimeType === 'string' && mimeType
+    ? mimeType.split(';')[0]
+    : 'audio/webm';
+  const fileName = `speech.${extensionForMimeType(safeMimeType)}`;
+  const model = process.env.OPENAI_TRANSCRIBE_MODEL || 'gpt-4o-mini-transcribe';
+
+  try {
+    const formData = new FormData();
+    formData.append('model', model);
+    formData.append('language', 'en');
+    formData.append(
+      'file',
+      new Blob([audioBuffer], { type: safeMimeType }),
+      fileName,
+    );
+
+    const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: formData,
+    });
+
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      console.error('STT proxy error:', {
+        status: response.status,
+        error: body?.error?.message ?? body?.error ?? 'Unknown transcription error',
+      });
+      return res.status(502).json({ error: 'Transcription request failed' });
+    }
+
+    return res.json({ text: typeof body.text === 'string' ? body.text : '' });
+  } catch (err) {
+    console.error('STT proxy exception:', err);
+    return res.status(502).json({ error: 'Transcription request failed' });
+  }
+});
+
+function extensionForMimeType(mimeType) {
+  if (mimeType.includes('mp4')) return 'mp4';
+  if (mimeType.includes('mpeg')) return 'mp3';
+  if (mimeType.includes('ogg')) return 'ogg';
+  if (mimeType.includes('wav')) return 'wav';
+  return 'webm';
+}
 
 // ─── LLM Route ───────────────────────────────────────────────────────────────
 
@@ -104,7 +193,7 @@ app.post('/api/llm', async (req, res) => {
     return res.status(400).json({ error: 'messages must be a non-empty array' });
   }
 
-  if (!checkRateLimit(sessionId)) {
+  if (!checkRateLimit(sessionRequestCounts, sessionId, MAX_REQUESTS_PER_SESSION)) {
     return res.status(429).json({ error: 'Session rate limit reached' });
   }
 

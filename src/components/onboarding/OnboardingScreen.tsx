@@ -7,6 +7,7 @@ import MicLevelMeter from '../MicLevelMeter';
 import { useSession } from '../../context/SessionContext';
 import {
   listMicInputDevices,
+  getVoicePrivacyCopy,
   runMicCaptureTest,
   setMicInputDevice,
   type MicInputDevice,
@@ -24,6 +25,7 @@ export default function OnboardingScreen() {
   const [micDevices, setMicDevices] = useState<MicInputDevice[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
   const micLevel = useMicLevel();
+  const voicePrivacyCopy = getVoicePrivacyCopy();
 
   // Form state
   const [childName, setChildName] = useState(state.config.childName);
@@ -185,7 +187,7 @@ export default function OnboardingScreen() {
             {/* Privacy note */}
             <div className="bg-gray-50 rounded-xl p-4 text-xs text-gray-500 leading-relaxed">
               <span className="font-semibold text-gray-600">🔒 Privacy first.</span>{' '}
-              No data is stored. No account is created. Voice is processed on this device only.
+              {voicePrivacyCopy}
             </div>
 
             {/* Submit */}
@@ -215,8 +217,8 @@ export default function OnboardingScreen() {
           <p className="text-gray-500 text-sm leading-relaxed mb-6">
             Gummy listens through the microphone so {name} can answer out loud.
             <br /><br />
-            <strong className="text-gray-700">Voice stays on this device.</strong>
-            {' '}Only the words — not the audio — are ever sent anywhere.
+            <strong className="text-gray-700">Privacy first.</strong>
+            {' '}{voicePrivacyCopy}
           </p>
           {micDevices.length > 0 && (
             <label className="block text-left text-sm font-semibold text-gray-700 mb-5">

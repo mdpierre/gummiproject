@@ -1,7 +1,14 @@
-// Speech-to-text using Whisper.js (WASM, in-browser).
-// Raw audio never leaves the device — only the transcript text is used downstream.
+// Speech-to-text orchestration.
+// The browser owns mic capture and level metering. Transcription can be cloud,
+// local Whisper, or cloud-first with a local fallback.
 
-import { transcribeAudio, transcribeSamples, isWhisperReady } from './whisper';
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
+const STT_SESSION_ID = `stt-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+type WhisperModule = typeof import('./whisper');
+let whisperModulePromise: Promise<WhisperModule> | null = null;
+
+export type STTProvider = 'cloud' | 'local' | 'auto';
 
 export interface STTResult {
   transcript: string;
@@ -11,7 +18,7 @@ export interface STTResult {
   sampleCount?: number;
   maxLevel?: number;
   inputLabel?: string;
-  transcriptSource?: 'pcm' | 'blob' | 'none';
+  transcriptSource?: 'cloud' | 'pcm' | 'blob' | 'none';
   transcriptionError?: string;
 }
 
@@ -49,6 +56,24 @@ const levelListeners = new Set<(state: MicLevelState) => void>();
 // can synchronize even when callers fire-and-forget the start.
 let startPromise: Promise<void> | null = null;
 let cancelledFlag = false;
+
+export function getSttProvider(): STTProvider {
+  const raw = String(import.meta.env.VITE_STT_PROVIDER ?? 'cloud').toLowerCase();
+  if (raw === 'local' || raw === 'auto' || raw === 'cloud') {
+    return raw;
+  }
+  return 'cloud';
+}
+
+export function requiresLocalWhisper(): boolean {
+  return getSttProvider() !== 'cloud';
+}
+
+export function getVoicePrivacyCopy(): string {
+  return requiresLocalWhisper()
+    ? 'No data is stored. No account is created. Voice is processed on this device.'
+    : 'No data is stored. No account is created. Voice is securely transcribed by the speech service and is not stored by Gummy.';
+}
 
 export function subscribeToMicLevel(listener: (state: MicLevelState) => void): () => void {
   levelListeners.add(listener);
@@ -191,7 +216,59 @@ export async function stopListening(): Promise<STTResult> {
   }
 
   try {
-    if (!isWhisperReady()) {
+    const provider = getSttProvider();
+    const errors: string[] = [];
+
+    if (provider === 'cloud' || provider === 'auto') {
+      const cloudBlob = recordedBlob?.size
+        ? recordedBlob
+        : samples.length > 0
+        ? samplesToWavBlob(samples, sampleRate)
+        : null;
+
+      if (cloudBlob?.size) {
+        try {
+          const transcript = await transcribeWithCloud(cloudBlob);
+          if (transcript) {
+            return {
+              transcript,
+              durationMs,
+              captureMode: recordedBlob?.size ? mode : 'web-audio',
+              audioBytes: cloudBlob.size,
+              sampleCount,
+              maxLevel,
+              inputLabel,
+              transcriptSource: 'cloud',
+            };
+          }
+          errors.push('Cloud returned empty transcript');
+        } catch (cloudError) {
+          const message = cloudError instanceof Error ? cloudError.message : 'Cloud transcription failed';
+          errors.push(message);
+          console.warn('Cloud transcription failed.', cloudError);
+        }
+      } else {
+        errors.push('No audio available for cloud transcription');
+      }
+
+      if (provider === 'cloud') {
+        return {
+          transcript: '',
+          durationMs,
+          captureMode: mode,
+          audioBytes,
+          sampleCount,
+          maxLevel,
+          inputLabel,
+          transcriptSource: 'none',
+          transcriptionError: errors.join('; ') || 'Cloud transcription failed',
+        };
+      }
+    }
+
+    const whisper = await getWhisperModule();
+
+    if (!whisper.isWhisperReady()) {
       console.warn('Whisper transcription skipped because the model is not ready.');
       return {
         transcript: '',
@@ -202,15 +279,13 @@ export async function stopListening(): Promise<STTResult> {
         maxLevel,
         inputLabel,
         transcriptSource: 'none',
-        transcriptionError: 'Whisper model is not ready',
+        transcriptionError: [...errors, 'Whisper model is not ready'].filter(Boolean).join('; '),
       };
     }
 
-    const errors: string[] = [];
-
     if (samples.length > 0) {
       try {
-        const transcript = await transcribeSamples(samples, sampleRate);
+        const transcript = await whisper.transcribeSamples(samples, sampleRate);
         if (transcript) {
           return {
             transcript,
@@ -233,7 +308,7 @@ export async function stopListening(): Promise<STTResult> {
 
     if (recordedBlob?.size) {
       try {
-        const transcript = await transcribeAudio(recordedBlob);
+        const transcript = await whisper.transcribeAudio(recordedBlob);
         if (transcript) {
           return {
             transcript,
@@ -266,7 +341,7 @@ export async function stopListening(): Promise<STTResult> {
       transcriptionError: errors.join('; ') || 'No local audio transcription path available',
     };
   } catch (err) {
-    console.error('Whisper transcription error:', err);
+    console.error('Speech transcription error:', err);
     return {
       transcript: '',
       durationMs,
@@ -276,7 +351,7 @@ export async function stopListening(): Promise<STTResult> {
       maxLevel,
       inputLabel,
       transcriptSource: 'none',
-      transcriptionError: err instanceof Error ? err.message : 'Whisper transcription error',
+      transcriptionError: err instanceof Error ? err.message : 'Speech transcription error',
     };
   }
 }
@@ -513,6 +588,79 @@ function mergeChunks(chunks: Float32Array[]): Float32Array {
   }
 
   return merged;
+}
+
+async function transcribeWithCloud(audioBlob: Blob): Promise<string> {
+  const response = await fetch(`${API_BASE}/api/transcribe`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      audioBase64: await blobToBase64(audioBlob),
+      mimeType: audioBlob.type || 'audio/webm',
+      sessionId: STT_SESSION_ID,
+    }),
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({ error: 'Unknown transcription error' }));
+    throw new Error(err.error ?? `HTTP ${response.status}`);
+  }
+
+  const data = await response.json();
+  return typeof data.text === 'string' ? data.text.trim() : '';
+}
+
+async function blobToBase64(blob: Blob): Promise<string> {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = '';
+  const chunkSize = 0x8000;
+
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+
+  return btoa(binary);
+}
+
+function samplesToWavBlob(samples: Float32Array, sourceSampleRate: number): Blob {
+  const bytesPerSample = 2;
+  const headerBytes = 44;
+  const buffer = new ArrayBuffer(headerBytes + samples.length * bytesPerSample);
+  const view = new DataView(buffer);
+
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + samples.length * bytesPerSample, true);
+  writeString(view, 8, 'WAVE');
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sourceSampleRate, true);
+  view.setUint32(28, sourceSampleRate * bytesPerSample, true);
+  view.setUint16(32, bytesPerSample, true);
+  view.setUint16(34, 8 * bytesPerSample, true);
+  writeString(view, 36, 'data');
+  view.setUint32(40, samples.length * bytesPerSample, true);
+
+  let offset = headerBytes;
+  for (const sample of samples) {
+    const clamped = Math.max(-1, Math.min(1, sample));
+    view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
+    offset += bytesPerSample;
+  }
+
+  return new Blob([buffer], { type: 'audio/wav' });
+}
+
+function writeString(view: DataView, offset: number, value: string): void {
+  for (let i = 0; i < value.length; i += 1) {
+    view.setUint8(offset + i, value.charCodeAt(i));
+  }
+}
+
+function getWhisperModule(): Promise<WhisperModule> {
+  whisperModulePromise ??= import('./whisper');
+  return whisperModulePromise;
 }
 
 async function cleanupAudioPipeline(): Promise<void> {

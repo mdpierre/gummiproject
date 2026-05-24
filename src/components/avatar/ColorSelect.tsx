@@ -6,6 +6,7 @@ import { useState, useEffect, useRef } from 'react';
 import GummyAvatar from './GummyAvatar';
 import Confetti from '../session/Confetti';
 import { speak } from '../../lib/speech/tts';
+import { requiresLocalWhisper } from '../../lib/speech/stt';
 import { useSession } from '../../context/SessionContext';
 
 // Curated palette — visually distinct, child-friendly
@@ -95,8 +96,8 @@ export default function ColorSelect() {
       ...state.config,
       chosenColor: currentColor,
     });
-    // Advance to Whisper loading screen after TTS plays (~2s)
-    setTimeout(() => setPhase('whisper-loading'), 2200);
+    const nextPhase = requiresLocalWhisper() ? 'whisper-loading' : 'calibration';
+    setTimeout(() => setPhase(nextPhase), 2200);
   }
 
   function handleChange() {

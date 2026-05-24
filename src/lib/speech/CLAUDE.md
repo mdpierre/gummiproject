@@ -4,14 +4,21 @@
 
 Manages both directions of the voice pipeline: STT (child's voice → text) and TTS (Gummy's text → speech). This is the most privacy-sensitive part of the stack.
 
-## STT: Whisper.js (In-Browser)
+## STT: Provider-Based Transcription
 
-### Critical Constraint
-Raw audio NEVER leaves the device. Whisper runs via WASM entirely in the browser. Only the resulting text transcript is sent anywhere.
+### Current Default
+`VITE_STT_PROVIDER=cloud` is the default because browser Whisper has been unreliable across target devices. The browser captures short mic clips, sends them to the server-side `/api/transcribe` proxy, and the proxy uses `OPENAI_TRANSCRIBE_MODEL` (`gpt-4o-mini-transcribe` by default). API keys never ship to the client.
+
+### Privacy Constraint
+Keep the UI copy aligned with the configured provider:
+- `cloud` or `auto`: audio is securely transcribed by the configured speech service and is not stored by Gummy.
+- `local`: voice is processed on device with Whisper.js.
+
+Only transcript text is sent to the tutoring LLM.
 
 ### Implementation
 
-Use `@xenova/transformers` to run `Whisper` models in-browser:
+Keep local Whisper available for `VITE_STT_PROVIDER=local` or `auto`:
 
 ```ts
 // lib/speech/stt.ts
@@ -29,22 +36,19 @@ export async function transcribe(audioBlob: Blob): Promise<string> {
 }
 ```
 
-Use `whisper-tiny.en` for speed — latency target is ≤2s p50. If accuracy is insufficient on first test, step up to `whisper-base.en`.
+Use `whisper-tiny.en` for speed if local mode is enabled. Latency target is ≤2s p50. If accuracy is insufficient on first test, step up to `whisper-base.en`.
 
 ### Recording
 
 Use the Web Audio API + `MediaRecorder`:
 1. Request mic permission (handled in onboarding)
 2. Stream audio to `MediaRecorder`
-3. On stop: collect blob → pass to `transcribe()`
+3. On stop: collect blob → cloud proxy or local `transcribe()`
 4. Expose `startListening()` / `stopListening()` / `onTranscript(cb)` interface
 
 ### Fallback
 
-If Whisper.js WASM is too slow (>3s p50 on target tablet hardware): fall back to Deepgram cloud STT. If fallback is used, display an on-screen consent disclosure:
-> *"For faster responses, your voice is being sent securely to a transcription service. No audio is stored."*
-
-This fallback is a last resort — prefer tuning the Whisper model size first.
+`VITE_STT_PROVIDER=auto` tries cloud transcription first, then local Whisper if it is ready.
 
 ---
 

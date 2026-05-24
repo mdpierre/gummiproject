@@ -40,8 +40,7 @@ At session end, a parent-facing PDF report is generated entirely client-side usi
 - Example: *"Jimmy worked hard today and answered 3 out of 4 questions on his own. He showed great thinking when asked why AI can't know what happened at school today!"*
 
 ### 7. Privacy Footer
-Must always appear, verbatim:
-> *"Voice data was processed on this device and was not transmitted or stored. This report was generated locally and contains no data from external servers."*
+Must always appear and must match the selected STT provider. Do not claim on-device voice processing when cloud STT is enabled.
 
 ## Implementation
 

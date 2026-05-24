@@ -2,9 +2,16 @@
 // Resolves once the model is ready, then advances to calibration.
 
 import { useEffect, useState } from 'react';
-import { initWhisper, type WhisperLoadProgress } from '../lib/speech/whisper';
+import { requiresLocalWhisper } from '../lib/speech/stt';
 import GummyAvatar from './avatar/GummyAvatar';
 import { useSession } from '../context/SessionContext';
+
+type WhisperLoadProgress = {
+  status: 'downloading' | 'loading' | 'ready' | 'error';
+  progress: number;
+  file?: string;
+  error?: string;
+};
 
 export default function WhisperLoader() {
   const { state, setPhase } = useSession();
@@ -25,9 +32,16 @@ export default function WhisperLoader() {
 
   useEffect(() => {
     let cancelled = false;
+    if (!requiresLocalWhisper()) {
+      setPhase('calibration');
+      return () => {
+        cancelled = true;
+      };
+    }
+
     setProgress({ status: 'downloading', progress: 0 });
 
-    initWhisper(p => {
+    import('../lib/speech/whisper').then(({ initWhisper }) => initWhisper(p => {
       if (cancelled) return;
       setProgress(p);
       if (p.status === 'ready') {
@@ -36,7 +50,7 @@ export default function WhisperLoader() {
           if (!cancelled) setPhase('calibration');
         }, 800);
       }
-    }).catch(err => {
+    })).catch(err => {
       console.error('Whisper init failed:', err);
       if (cancelled) return;
       setProgress({

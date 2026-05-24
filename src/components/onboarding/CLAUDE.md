@@ -22,7 +22,7 @@ The parent-facing onboarding screen collects configuration before the child's se
 ## Mic Permission Flow
 
 After the form, guide the user through microphone permission:
-1. Explain: *"Gummy listens through your mic to hear [name]'s answers. Voice stays on this device."*
+1. Explain the selected STT provider honestly. Cloud mode: *"Voice is securely transcribed by the speech service and is not stored by Gummy."* Local mode: *"Voice stays on this device."*
 2. Trigger browser mic permission prompt
 3. On grant: proceed to avatar/color selection
 4. On deny: show a non-blocking explainer — voice is required, offer to re-try

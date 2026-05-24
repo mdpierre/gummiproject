@@ -10,6 +10,7 @@ import {
   pdf,
 } from '@react-pdf/renderer';
 import type { SessionMetrics } from '../../types';
+import { getVoicePrivacyCopy } from '../../lib/speech/stt';
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
@@ -260,7 +261,7 @@ function ReportDoc({ metrics, gummyNote, accentColor }: ReportDocProps) {
         {/* ── Privacy Footer ── */}
         <View style={S.footer}>
           <Text style={S.footerText}>
-            Voice data was processed on this device and was not transmitted or stored.
+            {getVoicePrivacyCopy()}{' '}
             This report was generated locally and contains no data from external servers.
             {'\n'}Gummy v0.1 — AI Reading Comprehension &amp; Literacy for Kids Ages 6–8
           </Text>

@@ -589,7 +589,7 @@ export default function SessionScreen({ content, navigateWhenDone }: SessionScre
         {(isListeningUI || lastTranscript || lastCaptureResult) && (
           <div className="w-full max-w-sm bg-white/80 rounded-3xl px-4 py-3 shadow-sm text-left">
             <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-1">
-              Whisper heard
+              Gummy heard
             </p>
             <p className="text-sm text-gray-700 leading-relaxed">
               {lastTranscript || 'Nothing captured yet.'}

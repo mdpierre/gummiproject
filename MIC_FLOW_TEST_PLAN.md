@@ -2,7 +2,11 @@
 
 ## Mechanism
 
-Gummy uses `getUserMedia` to open the selected browser microphone, records locally with `MediaRecorder`, and transcribes locally with Whisper through Transformers.js. A Web Audio path runs at the same time for live input level feedback and PCM fallback. Raw audio stays on the device.
+Gummy uses `getUserMedia` to open the selected browser microphone, records with `MediaRecorder`, and runs Web Audio at the same time for live input level feedback and PCM fallback. Transcription is provider-based:
+
+- `VITE_STT_PROVIDER=cloud` sends the short recorded clip to the backend `/api/transcribe` proxy and uses OpenAI `gpt-4o-mini-transcribe` by default.
+- `VITE_STT_PROVIDER=local` transcribes locally with Whisper through Transformers.js.
+- `VITE_STT_PROVIDER=auto` tries cloud first, then local Whisper if the model is ready.
 
 ## Required Device Checks
 
@@ -13,7 +17,7 @@ For each target below:
 3. During "Checking the microphone", speak for two seconds.
 4. Confirm onboarding advances only when audio bytes or PCM samples are captured.
 5. Confirm the listening meter moves while speaking in calibration.
-6. Confirm "Whisper heard" shows a transcript after tapping Done talking.
+6. Confirm "Gummy heard" shows a transcript after tapping Done talking.
 7. Refresh and repeat once to catch stale permission or cached model issues.
 
 ## Matrix
@@ -33,5 +37,5 @@ For each target below:
 |---|---|
 | Browser mic indicator appears, onboarding does not advance | Permission succeeded, but no audio bytes or PCM samples were captured |
 | Meter never moves while speaking | Web Audio graph is not receiving mic signal or the wrong input device is selected |
-| Meter moves, transcript is empty | Whisper decode/transcription failed or the recording was too short/quiet |
+| Meter moves, transcript is empty | Transcription provider failed, returned an empty transcript, or the recording was too short/quiet |
 | Works once, then fails after refresh | Browser permission/device state is stale; revoke permission and retry |

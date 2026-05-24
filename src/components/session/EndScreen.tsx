@@ -7,6 +7,7 @@ import { speak } from '../../lib/speech/tts';
 import { metricsCollector } from '../../lib/metrics/collector';
 import { generateGummyNote } from '../../lib/llm/client';
 import { downloadSessionReport } from '../report/SessionReport';
+import { getVoicePrivacyCopy } from '../../lib/speech/stt';
 import { Link } from 'react-router-dom';
 import { useSessionOptional } from '../../context/SessionContext';
 import { useProfile } from '../../context/ProfileContext';
@@ -143,7 +144,7 @@ export default function EndScreen() {
 
       {/* Privacy note */}
       <p className="text-xs text-gray-400 max-w-xs leading-relaxed">
-        🔒 Voice data was processed on this device and was not transmitted or stored.
+        🔒 {getVoicePrivacyCopy()}
         This report was generated locally.
       </p>
 
