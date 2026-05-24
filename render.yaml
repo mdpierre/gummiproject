@@ -11,7 +11,13 @@ services:
         value: 20
       - key: VITE_TTS_PROVIDER
         value: web-speech
+      - key: VITE_STT_PROVIDER
+        value: cloud
       - key: VITE_API_BASE_URL
         value: ""
       - key: ANTHROPIC_API_KEY
         sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_TRANSCRIBE_MODEL
+        value: gpt-4o-mini-transcribe
